@@ -1,15 +1,29 @@
 import numpy as np
 
 
-class logistic_classifier:
+class LogisticClassifier:
+    """
+    logistic regression classifier
+
+    Parameters:
+    max_iter: int default=1000
+        The number of iteration times.
+    learning_rate: float default=0.1
+        the learning rate for gradient descent
+    l2_loss: float default=0
+        parameter to control the ridge (L2) regression
+    """
+
     def __init__(
         self,
-        max_iter:int = 1000,
+        max_iter: int = 1000,
         learning_rate: float = 0.1,
+        l2_loss: float = 0
     ):
 
         self.max_iter = max_iter
         self.learning_rate = learning_rate
+        self.l2_loss = l2_loss
         self.w = np.empty((0, 0))
         self.loss_list = []
 
@@ -27,11 +41,12 @@ class logistic_classifier:
         """
         logistic regression model uses cross entropy loss function.
         """
-        val = np.sum(-(1/len(y))*(y*np.log(y_pre) + (1-y)*np.log(1-y_pre)))
+        val = -(1 / len(y)) * np.sum((y * np.log(y_pre) + (1 - y) * np.log(1 - y_pre))) + \
+              self.l2_loss / (2 * len(y)) * np.sum(np.square(self.w))  # l2 loss
         return val
 
     def gradient_function(self, x: np.ndarray, y: np.ndarray, y_pre: np.ndarray) -> np.ndarray:
-        grad = np.dot(x.T, (1/len(y))*(y_pre-y))
+        grad = np.dot(x.T, (1 / len(y)) * (y_pre - y)) + self.l2_loss / len(y) * self.w
         assert grad.shape == (x.shape[1], 1)
         return grad
 
@@ -56,7 +71,7 @@ class logistic_classifier:
             loss_val = self.loss_function(y, y_pred)
             self.loss_list.append(loss_val)
             gradient = self.gradient_function(x, y, y_pred)
-            self.w -= self.learning_rate*gradient
+            self.w -= self.learning_rate * gradient
         return self
 
     def predict_proba(self, x: np.ndarray) -> np.ndarray:
@@ -71,4 +86,4 @@ class logistic_classifier:
     def get_accuracy_score(self, y: np.ndarray, y_pred: np.ndarray) -> float:
         y = y.reshape((-1, 1))
         y_pred = y_pred.reshape((-1, 1))
-        return np.sum(y == y_pred)/len(y)
+        return np.sum(y == y_pred) / len(y)
