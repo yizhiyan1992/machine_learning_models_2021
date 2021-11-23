@@ -1,4 +1,5 @@
 import numpy as np
+from typing import Tuple
 import matplotlib.pyplot as plt
 
 class NeuralNetworkClassifier:
@@ -10,7 +11,8 @@ class NeuralNetworkClassifier:
         learning_rate: float = 0.01,
         num_layer: int = 3,
         num_neurons: int = 20,
-        l2_regularization: float = 0
+        l2_regularization: float = 0,
+        activation_function: str = 'tanh'
     ):
 
         # type check
@@ -18,8 +20,8 @@ class NeuralNetworkClassifier:
             raise ValueError(f"The max_iter should be positive integer, got {max_iter}")
         if not isinstance(learning_rate, float) or learning_rate <= 0:
             raise ValueError(f"The learning_rate should be positive float number, got {learning_rate}")
-        if not isinstance(num_layer, int) or num_layer <= 0:
-            raise ValueError(f"The num_layer should be positive integer, got {num_layer}")
+        if not isinstance(num_layer, int) or num_layer <= 1:
+            raise ValueError(f"The num_layer should be larger than 1, got {num_layer}")
         if not isinstance(num_neurons, int) or num_neurons <= 0:
             raise ValueError(f"The num_neurons should be positive integer, got {num_neurons}")
         if not isinstance(learning_rate, float) or learning_rate <= 0:
@@ -30,13 +32,13 @@ class NeuralNetworkClassifier:
         self.num_layer = num_layer
         self.num_neurons = num_neurons
         self.l2_regularization = l2_regularization
-        self.w = dict()
-        self.b = dict()
+        self.activation_func = activation_function
+        self.parameters = dict()
 
     def __str__(self):
         pass
 
-    def forward_propagation(self, x: np.ndarray, y: np.ndarray):
+    def forward_propagation(self, x: np.ndarray, y: np.ndarray) -> Tuple[float, dict]:
         """ perform forward-propagation from the first layer to the last for one time
 
         Parameters
@@ -45,29 +47,31 @@ class NeuralNetworkClassifier:
             input features X
         y: array-like
             input labels y
+        parameters: dict
+            the dict saving w and b
         Returns
         ----------
         loss: float
             the loss value of all samples
-        intermediate_values: dict
-            the temporary dict used to save a and z values in different layers, which will be used for backward-prop
+        cache: dict
+            the cache saving a and z values in different layers, which will be used for back-prop
         """
-        intermediate_values = dict()
+        cache = dict()
         cur_a = x
-        intermediate_values['a_layer_-1'] = x
+        cache['a_layer_-1'] = x
         for layer in range(self.num_layer):
-            cur_w = self.w['layer_' + str(layer)]
-            cur_b = self.b['layer_' + str(layer)]
+            cur_w = self.parameters['w_layer_' + str(layer)]
+            cur_b = self.parameters['b_layer_' + str(layer)]
             next_z = self.linear_transform(cur_a, cur_w, cur_b)
-            if layer != self.num_layer -1:
-                next_a = self.activation_function(next_z)
+            if layer != self.num_layer - 1:
+                next_a = self.activation_function(next_z, self.activation_func)
             else:
                 next_a = 1/(1+np.exp(-next_z))
-            intermediate_values['z_layer_' + str(layer)] = next_z
-            intermediate_values['a_layer_' + str(layer)] = next_a
+            cache['z_layer_' + str(layer)] = next_z
+            cache['a_layer_' + str(layer)] = next_a
             cur_a = next_a
         loss = self.loss_function(y, cur_a)
-        return loss, intermediate_values
+        return loss, cache
 
     @staticmethod
     def linear_transform(a: np.ndarray, w: np.ndarray, b: np.ndarray) -> np.ndarray:
@@ -90,29 +94,55 @@ class NeuralNetworkClassifier:
         return z
 
     @staticmethod
-    def activation_function(z: np.ndarray, activate_func: str = 'sigmoid') -> np.ndarray:
-        """ perform lineaer transform and activation function for each layer when forward propagating
+    def activation_function(z: np.ndarray, activate_func: str = 'tanh') -> np.ndarray:
+        """ perform linear transform and activation function for each layer when forward propagating
 
         Parameters
         ----------
         z: array-like
             input value for activation
-        activate_func: {'sigmoid','relu'} default = sigmoid
+        activate_func: {'sigmoid','relu', 'tanh} default = tanh
             the type of activation function
 
         Return
         ----------
-            array-like
+            a: array-like
         """
+        assert activate_func in {'sigmoid', 'relu', 'tanh'}
+
+        if activate_func == 'tanh':
+            a = np.tanh(z)
         if activate_func == 'sigmoid':
-            #return 1 / (1 + np.exp(-z))
-            return np.tanh(z)
+            a = 1 / (1 + np.exp(-z))
         elif activate_func == 'relu':
-            pass
+            a = np.max(0, z)
+        return a
+
+    @staticmethod
+    def activation_function_derivative(z: np.ndarray, activate_func: str = 'tanh') -> np.ndarray:
+        """ Perform the derivation of activation function when back-propagating
+
+        Parameters
+        ----------
+
+        Returns
+        ----------
+
+        """
+        assert activate_func in {'sigmoid', 'relu', 'tanh'}
+
+        if activate_func == 'tanh':
+            deri_z = (1 - np.square(z))
+        elif activate_func == 'sigmoid':
+            sigmoid = (1 / (1 + np.exp(-z)))
+            deri_z = sigmoid * (1 - sigmoid)
+        elif activate_func == 'relu':
+            deri_z = np.where(z < 0, 0, 1)
+        return deri_z
 
     @staticmethod
     def loss_function(y: np.ndarray, y_pre: np.ndarray) -> float:
-        """ use least square error function to calculate loss values
+        """ use cross entropy loss for binary classification problem
 
         Parameters
         ----------
@@ -129,49 +159,30 @@ class NeuralNetworkClassifier:
         cost_sum = np.multiply(np.log(y_pre), y) + np.multiply((1 - y), np.log(1 - y_pre))
         cost = - np.sum(cost_sum) / m
         cost = float(np.squeeze(cost))
-        assert isinstance(cost, float)
         return cost
 
-    @staticmethod
-    def backward_propagation(y: np.ndarray, intermediate_values: dict, w_dict: dict) -> dict:
+    def backward_propagation(self, y: np.ndarray, cache: dict) -> dict:
         """ Calculate the gradients of w and b for each layer
         """
         derivative_dict = dict()
-        num_layer = len(intermediate_values) // 2
-        #a = intermediate_values['a_layer_' + str(num_layer - 1)]
-        #d_a = np.mean(a - y)
+        n_layer = len(cache) // 2
+        n_sample = y.shape[1]
+        a = cache['a_layer_' + str(n_layer - 1)]
+        d_z = a - y  # the derivative from loss to z in output layer
 
-        a = intermediate_values['a_layer_1']
-        # 1 layer
-        #z = intermediate_values['z_layer_0']
-        #d_z = d_a * (1 - z) * z
-        d_z = a - y
-        a_pre = intermediate_values['a_layer_0']
-        d_w = np.dot(d_z, a_pre.T) * (1/y.shape[1])
-        derivative_dict['w_layer_1'] = d_w
-        d_b = np.sum(d_z, axis=1, keepdims=True) * (1/y.shape[1])
-        derivative_dict['b_layer_1'] = d_b
-        z = intermediate_values['z_layer_0']
-        d_z = np.dot(w_dict['layer_1'].T, d_z)*(1-z**2)
-        a_pre = intermediate_values['a_layer_-1']
-        d_w = np.dot(d_z, a_pre.T) * (1/y.shape[1])
-        derivative_dict['w_layer_0'] = d_w
-        d_b = np.sum(d_z, axis=1, keepdims=True)* (1/y.shape[1])
-        derivative_dict['b_layer_0'] = d_b
-
-        """
-        for i in reversed(range(num_layer)):
-            z = intermediate_values['z_layer_' + str(i)]
-            d_z = d_a * (1 - z) * z
-            a_pre = intermediate_values['a_layer_' + str(i - 1)]
-            d_w = np.dot(d_z, a_pre.T)
-            derivative_dict['w_layer_' + str(i)] = d_w
-            d_b = np.mean(d_z, axis=1, keepdims=True)
-            derivative_dict['b_layer_' + str(i)] = d_b
-            w = w_dict['layer_' + str(i)]
-            d_a = np.dot(w.T, d_z)
-        """
-       # print(derivative_dict)
+        #  back propagation for each layer
+        for layer in reversed(range(n_layer)):
+            a_pre = cache['a_layer_' + str(layer - 1)]
+            d_w = np.dot(d_z, a_pre.T) * (1 / n_sample)
+            derivative_dict['w_layer_' + str(layer)] = d_w
+            d_b = np.sum(d_z, axis=1, keepdims=True) * (1 / n_sample)
+            derivative_dict['b_layer_' + str(layer)] = d_b
+            if layer == 0:
+                break
+            z_pre = cache['z_layer_' + str(layer - 1)]
+            d_z_pre = np.dot(self.parameters['w_layer_' + str(layer)].T, d_z) * \
+                self.activation_function_derivative(z_pre, self.activation_func)
+            d_z = d_z_pre
         return derivative_dict
 
     def fit(self, x: np.ndarray, y: np.ndarray):
@@ -204,29 +215,28 @@ class NeuralNetworkClassifier:
         # generate parameters W and b w.shape = [neuron_next, neuron_cur], b.shape = [neuron_next, 1]
         for layer in range(self.num_layer):
             if layer == 0:
-                self.w['layer_' + str(layer)] = np.random.randn(self.num_neurons, n_features)*0.01
-                self.b['layer_' + str(layer)] = np.zeros((self.num_neurons, 1))
+                self.parameters['w_layer_' + str(layer)] = np.random.randn(self.num_neurons, n_features)*0.01
+                self.parameters['b_layer_' + str(layer)] = np.zeros((self.num_neurons, 1))
             elif layer == self.num_layer - 1:
-                self.w['layer_' + str(layer)] = np.random.randn(1, self.num_neurons, )*0.01
-                self.b['layer_' + str(layer)] = np.zeros((1, 1))
+                self.parameters['w_layer_' + str(layer)] = np.random.randn(1, self.num_neurons, )*0.01
+                self.parameters['b_layer_' + str(layer)] = np.zeros((1, 1))
             else:
-                self.w['layer_' + str(layer)] = np.random.randn(self.num_neurons, self.num_neurons)*0.01
-                self.b['layer_' + str(layer)] = np.zeros((self.num_neurons, 1))
-        for i in self.w.values():
-            print(i.shape,'w shape')
+                self.parameters['w_layer_' + str(layer)] = np.random.randn(self.num_neurons, self.num_neurons)*0.01
+                self.parameters['b_layer_' + str(layer)] = np.zeros((self.num_neurons, 1))
+
         loss_list = []
-        for ite in range(2000):
-            loss, inter_val = self.forward_propagation(x, y)
+        for ite in range(self.max_iter):
+            loss, cache = self.forward_propagation(x, y)
             loss_list.append(loss)
-            derivative_dict = self.backward_propagation(y, inter_val, self.w)
-            print('loss',loss)
+            derivative_dict = self.backward_propagation(y, cache)
             # update gradient
             for layer in range(self.num_layer):
-                self.w['layer_' + str(layer)] -= self.learning_rate * derivative_dict['w_layer_' + str(layer)]
-                self.b['layer_' + str(layer)] -= self.learning_rate * derivative_dict['b_layer_' + str(layer)]
+                self.parameters['w_layer_' + str(layer)] -= self.learning_rate * derivative_dict['w_layer_' + str(layer)]
+                self.parameters['b_layer_' + str(layer)] -= self.learning_rate * derivative_dict['b_layer_' + str(layer)]
 
         plt.plot(loss_list)
         plt.show()
+
     def predict(self):
         """ """
         pass
